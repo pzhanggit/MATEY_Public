@@ -20,6 +20,7 @@ from .thewell_datasets import *
 from .binary_3DSSTdatasets import *
 from .graph_datasets import *
 from .flow3d_datasets import *
+from .h3_graph_datasets import *
 import os
 from torch_geometric.data import Data as GraphData, Batch
 import warnings
@@ -87,6 +88,8 @@ DSET_NAME_TO_OBJECT = {
     #"h2jetRe": H2jetDataset,
     #"pass-fhit": FHITsnapshots,
     #"hit-dns": HITDNSsnapshots,
+    ##EXPOSOME DATASETS
+    "h3airqualitygraph": H3AirQualityGraphDataset,
     }
 # dictionary mapping canonical field names to lists of possible aliases in datasets; 
 # used when tie_fields is True to assign fields with different names but same physical meaning to the same channel
@@ -167,7 +170,7 @@ def get_data_loader(params, paths, distributed, split='train', global_rank=0, nu
                         #prefetch_factor=2,
                         batch_sampler=sampler,
                         pin_memory=torch.cuda.is_available(), 
-                        persistent_workers=True, #ask dataloaders not destroyed after each epoch
+                        #persistent_workers=True, #ask dataloaders not destroyed after each epoch
                         collate_fn=my_collate,
                         )
     return dataloader, dataset, sampler

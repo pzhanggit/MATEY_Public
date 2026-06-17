@@ -137,6 +137,50 @@ def GradLoss(input, target):
 
     return loss
 
+def _r2_score(pred, target, eps=1.0e-6):
+    """Compute R2 score.
+
+    R2 = 1 - sum((y - yhat)^2) / sum((y - mean(y))^2)
+
+    pred and target should already be restricted to the nodes/pixels where
+    the metric should be evaluated, e.g. query nodes only for H3 graphs.
+    """
+    pred = pred.float()
+    target = target.float()
+
+    ss_res = (pred - target).pow(2).sum()
+    ss_tot = (target - target.mean(dim=0, keepdim=True)).pow(2).sum()
+
+    return 1.0 - ss_res / ss_tot.clamp_min(eps)
+
+def _graph_loss_mask(graphdata, output):
+    """Return a boolean node mask for graph losses.
+    H3AirQualityGraphDataset sets graphdata.loss_mask/query_mask so that
+    supervised loss is evaluated only on query nodes. Other graph datasets
+    that do not define a mask keep the old behavior: all nodes contribute.
+    """
+    if graphdata is None:
+        return None
+
+    if hasattr(graphdata, "loss_mask"):
+        mask = graphdata.loss_mask
+    elif hasattr(graphdata, "query_mask"):
+        mask = graphdata.query_mask
+    else:
+        return torch.ones(output.shape[0], dtype=torch.bool, device=output.device)
+
+    mask = mask.view(-1).to(device=output.device, dtype=torch.bool)
+
+    if mask.numel() != output.shape[0]:
+        raise ValueError(
+            f"graph loss mask length {mask.numel()} does not match output nodes {output.shape[0]}"
+        )
+
+    if mask.sum().item() == 0:
+        raise ValueError("graph loss mask has no True entries; no query nodes available for loss")
+
+    return mask
+
 def compute_loss_and_logs(output, tar, graphdata, logs, loss_logs, dset_type, params):
     """
     compute loss and update logging dicts.
@@ -149,9 +193,17 @@ def compute_loss_and_logs(output, tar, graphdata, logs, loss_logs, dset_type, pa
     residuals = output - tar
     if output.ndim == 2:
         ###full resolution###
-         #[nnodes, C_tar] 
+        #[nnodes, C_tar] 
+        #For sensor/query H3 graphs, evaluate loss only on query nodes.
+        node_mask = _graph_loss_mask(graphdata, output)
+        output_loss = output[node_mask]
+        tar_loss = tar[node_mask]
+        residuals_loss = output_loss - tar_loss
+        batch_loss = graphdata.batch[node_mask]
+
+        raw_loss = global_mean_pool(residuals_loss.pow(2), batch_loss)/global_mean_pool(1e-7 + tar_loss.pow(2), batch_loss) #B,C
         # Differentiate between log and accumulation losses
-        raw_loss = global_mean_pool(residuals.pow(2), graphdata.batch)/global_mean_pool(1e-7 + tar.pow(2), graphdata.batch) #B,C
+        #raw_loss = global_mean_pool(residuals.pow(2), graphdata.batch)/global_mean_pool(1e-7 + tar.pow(2), graphdata.batch) #B,C
         # Scale loss for accum
         loss = raw_loss.mean() /params.accum_grad
         spatial_dims = None
@@ -171,12 +223,22 @@ def compute_loss_and_logs(output, tar, graphdata, logs, loss_logs, dset_type, pa
             loss += params.grad_loss_alpha * grad_loss
     # Logging
     with torch.no_grad():
-        logs['train_l1'] += F.l1_loss(output, tar)
+        if output.ndim == 2:
+            logs["train_l1"] += F.l1_loss(output_loss, tar_loss)
+            logs["train_rmse"] += residuals_loss.pow(2).mean(dim=0).sqrt().mean()
+            #logs["train_r2"] += _r2_score(output_loss, tar_loss)
+            #this is for PM2.5 dataset only
+            logs["train_r2"] += _r2_score(torch.pow(10, output_loss), torch.pow(10, tar_loss))
+        else:
+            logs['train_l1'] += F.l1_loss(output, tar)
+            logs['train_rmse'] += residuals.pow(2).mean(spatial_dims).sqrt().mean()
+            logs["train_r2"] += _r2_score(output, tar)
         log_nrmse = raw_loss.sqrt().mean()
         logs['train_nrmse'] += log_nrmse 
         loss_logs[dset_type] += log_nrmse.item()
-        logs['train_rmse'] += residuals.pow(2).mean(spatial_dims).sqrt().mean()
-            
+
+    #FIXME: Temporary test by Pei to see if any difference caused by loss function in PM2.5
+    loss = 1.0-_r2_score(torch.pow(10, output_loss), torch.pow(10, tar_loss))        
     return loss, log_nrmse
 
 def update_loss_logs_inplace_eval(output, tar, graphdata, logs, loss_dset_logs, loss_l1_dset_logs, loss_rmse_dset_logs, dset_type):
@@ -191,9 +253,25 @@ def update_loss_logs_inplace_eval(output, tar, graphdata, logs, loss_dset_logs, 
     if output.ndim == 2:
         #[nnodes, C_tar] 
         # Differentiate between log and accumulation losses
-        raw_loss = global_mean_pool(residuals.pow(2), graphdata.batch)/global_mean_pool(1e-7 + tar.pow(2), graphdata.batch) #B,C
+        # For sensor/query H3 graphs, evaluate metrics only on query nodes.
+        node_mask = _graph_loss_mask(graphdata, output)
+        output_loss = output[node_mask]
+        tar_loss = tar[node_mask]
+        residuals_loss = output_loss - tar_loss
+        batch_loss = graphdata.batch[node_mask]
+
+        raw_loss = global_mean_pool(residuals_loss.pow(2), batch_loss) / global_mean_pool(1e-7 + tar_loss.pow(2), batch_loss)
+
         raw_loss = raw_loss.sqrt().mean()
-        raw_rmse_loss = residuals.pow(2).mean(dim=0).sqrt().mean()
+        raw_rmse_loss = residuals_loss.pow(2).mean(dim=0).sqrt().mean()
+        raw_l1_loss = F.l1_loss(output_loss, tar_loss)
+        #raw_r2_loss = _r2_score(output_loss, tar_loss)
+        #this is for PM2.5 dataset only
+        raw_r2_loss = _r2_score(torch.pow(10, output_loss), torch.pow(10, tar_loss))
+        
+        #raw_loss = global_mean_pool(residuals.pow(2), graphdata.batch)/global_mean_pool(1e-7 + tar.pow(2), graphdata.batch) #B,C
+        #raw_loss = raw_loss.sqrt().mean()
+        #raw_rmse_loss = residuals.pow(2).mean(dim=0).sqrt().mean()
     else:
         ###full resolution###
         spatial_dims = tuple(range(output.ndim))[2:]
@@ -201,10 +279,12 @@ def update_loss_logs_inplace_eval(output, tar, graphdata, logs, loss_dset_logs, 
         raw_loss = residuals.pow(2).mean(spatial_dims)/(1e-7+ tar.pow(2).mean(spatial_dims))
         raw_loss = raw_loss.sqrt().mean()
         raw_rmse_loss = residuals.pow(2).mean(spatial_dims).sqrt().mean()
-    raw_l1_loss = F.l1_loss(output, tar)
+        raw_l1_loss = F.l1_loss(output, tar)
+        raw_r2_loss = _r2_score(output, tar)
     logs['valid_nrmse'] += raw_loss
     logs['valid_l1']    += raw_l1_loss
     logs['valid_rmse']  += raw_rmse_loss
+    logs["valid_r2"] += raw_r2_loss
     loss_dset_logs[dset_type]      += raw_loss
     loss_l1_dset_logs[dset_type]   += raw_l1_loss
     loss_rmse_dset_logs[dset_type] += raw_rmse_loss

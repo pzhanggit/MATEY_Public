@@ -547,6 +547,7 @@ class Trainer:
         logs = {'train_rmse': torch.zeros(1).to(self.device),
                 'train_nrmse': torch.zeros(1).to(self.device),
             'train_l1': torch.zeros(1).to(self.device),
+            'train_r2': torch.zeros(1).to(self.device),
             'train_ssim': torch.zeros(1).to(self.device)}
         steps = 0
         grad_logs = defaultdict(lambda: torch.zeros(1, device=self.device))
@@ -634,9 +635,7 @@ class Trainer:
                     output, rollout_steps = self.model_forward(inp, field_labels, bcs, opts)
                     if not isgraph:
                         tar = tar[:, -1, :] #B,T(1 or leadtime),C,D,H,W -> B,C,D,H,W
-                #compute loss and update (in-place) logging dicts.
-                loss, log_nrmse = compute_loss_and_logs(output, tar, graphdata if isgraph else None, logs, loss_logs, dset_type, self.params)
-                bad = torch.isnan(loss).any() or torch.isinf(loss)
+                bad = torch.isnan(output).any() or torch.isinf(output).any()
                 torch.distributed.all_reduce(bad, op=torch.distributed.ReduceOp.SUM)
                 if bad.item() > 0:
                     if isgraph:
@@ -646,6 +645,8 @@ class Trainer:
                         print(f"INF: {torch.isinf(inp).any(), torch.isinf(tar).any(), torch.isinf(output).any(), bad} for {dset_type}")
                         print(f"NAN: {torch.isnan(inp).any(), torch.isnan(tar).any(), torch.isnan(output).any(), bad} for {dset_type}")
                     continue
+                #compute loss and update (in-place) logging dicts.
+                loss, log_nrmse = compute_loss_and_logs(output, tar, graphdata if isgraph else None, logs, loss_logs, dset_type, self.params)
                 if not isgraph:
                     if self.params.pei_debug:
                         checking_data_pred_tar(tar, output, blockdict, self.global_rank, self.current_group, self.group_rank, self.group_size, 
@@ -718,6 +719,7 @@ class Trainer:
         logs = {'valid_rmse':  torch.zeros(1).to(self.device),
                 'valid_nrmse': torch.zeros(1).to(self.device),
                 'valid_l1':    torch.zeros(1).to(self.device),
+                'valid_r2':    torch.zeros(1).to(self.device),
                 'valid_ssim':  torch.zeros(1).to(self.device)}
         if cutoff_skip:
             return logs
@@ -730,10 +732,10 @@ class Trainer:
         steps = 0
         valid_iter = iter(self.valid_data_loader)
         
-        if full:
+        if True: #full:
             cutoff = len(self.valid_data_loader)
-        else:
-            cutoff = 5 #40
+        #else:
+        #    cutoff = 5 #40
 
         num_batches = min(len(self.valid_data_loader), self.params.epoch_size)
 
@@ -807,6 +809,16 @@ class Trainer:
                     output, rollout_steps = self.model_forward(inp, field_labels, bcs, opts)
                     if not isgraph:
                         tar = tar[:, -1, :] #B,T(1 or leadtime),C,D,H,W -> B,C,D,H,W
+                    bad = torch.isnan(output).any() or torch.isinf(output).any()
+                    torch.distributed.all_reduce(bad, op=torch.distributed.ReduceOp.SUM)
+                    if bad.item() > 0:
+                        if isgraph:
+                            print(f"Val INF: {inp.x.min(), inp.x.max(), tar.min(), tar.max(), torch.isinf(inp.x).any(), torch.isinf(tar).any(), torch.isinf(output).any(), bad} for {dset_type}")
+                            print(f"Val NAN: {torch.isnan(inp.x).any(), torch.isnan(tar).any(), torch.isnan(output).any(), bad} for {dset_type}")
+                        else:
+                            print(f"Val INF: {torch.isinf(inp).any(), torch.isinf(tar).any(), torch.isinf(output).any(), bad} for {dset_type}")
+                            print(f"Val NAN: {torch.isnan(inp).any(), torch.isnan(tar).any(), torch.isnan(output).any(), bad} for {dset_type}")
+                    
                     update_loss_logs_inplace_eval(output, tar, graphdata if isgraph else None, logs, loss_dset_logs, loss_l1_dset_logs, loss_rmse_dset_logs, dset_type)
                     if not isgraph and getattr(self.params, "log_ssim", False):
                             avg_ssim = get_ssim(output, tar, blockdict, self.global_rank, self.current_group, self.group_rank, self.group_size, self.device, self.valid_dataset, dset_index)

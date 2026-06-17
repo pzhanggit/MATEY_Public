@@ -147,7 +147,7 @@ class ViT_all2all(BaseModel):
             edge_index = data.edge_index #
             batch = data.batch ##[N_total]
             T = x.shape[1] 
-            x, data_mean, data_std = normalize_spatiotemporal_persample_graph(x, batch) #, sequence_parallel_group=sequence_parallel_group) #node features, mean_g:[G,C], std_g:[G,C]
+            #x, data_mean, data_std = normalize_spatiotemporal_persample_graph(x, batch) #, sequence_parallel_group=sequence_parallel_group) #node features, mean_g:[G,C], std_g:[G,C]
             refineind=None
             x = (x, batch, edge_index, ghost_info, sequence_parallel_group)  
         else:
@@ -225,10 +225,10 @@ class ViT_all2all(BaseModel):
                 N = x.shape[0]
                 mask = torch.isin(state_labels[0], field_labels_out[0])
                 #broadcast to node   
-                mean_node = data_mean[batch].view(N, 1, -1)[:, :, mask]
-                std_node  = data_std[batch].view(N, 1, -1)[:, :, mask]
+                #mean_node = data_mean[batch].view(N, 1, -1)[:, :, mask]
+                #std_node  = data_std[batch].view(N, 1, -1)[:, :, mask]
 
-                x = x * std_node + mean_node
+                #x = x * std_node + mean_node
                 x= x[:, -1, :] #[nnodes, C]
                 if ghost_info is not None:
                     x = HaloExchange_sync(x, ghost_info, sequence_parallel_group)
