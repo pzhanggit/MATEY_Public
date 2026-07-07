@@ -237,8 +237,12 @@ def compute_loss_and_logs(output, tar, graphdata, logs, loss_logs, dset_type, pa
         logs['train_nrmse'] += log_nrmse 
         loss_logs[dset_type] += log_nrmse.item()
 
-    #FIXME: Temporary test by Pei to see if any difference caused by loss function in PM2.5
-    loss = 1.0-_r2_score(torch.pow(10, output_loss), torch.pow(10, tar_loss))        
+    if getattr(params, "loss_type", "NMSE") == "R2loss":
+        #NOTE: Temporary test by Pei to see if any difference caused by loss function in PM2.5
+        loss = 1.0-_r2_score(torch.pow(10, output_loss), torch.pow(10, tar_loss))  
+    elif getattr(params, "loss_type", "NMSE") == "MSEloss":
+        #NOTE: test MSE loss instead of NMSE
+        loss = global_mean_pool(residuals_loss.pow(2), batch_loss).mean()/params.accum_grad     
     return loss, log_nrmse
 
 def update_loss_logs_inplace_eval(output, tar, graphdata, logs, loss_dset_logs, loss_l1_dset_logs, loss_rmse_dset_logs, dset_type):

@@ -2,9 +2,9 @@
 #SBATCH -A MED117
 #SBATCH -J matey
 #SBATCH -o %x-%j.out
-#SBATCH -t 08:00:00
+#SBATCH -t 12:00:00
 #SBATCH -p extended
-#SBATCH -N 1
+#SBATCH -N 2
 ##SBATCH -q debug
 #SBATCH -C nvme
 
@@ -38,6 +38,18 @@ export MASTER_ADDR=$(hostname -i)
 export MASTER_PORT=3442
 
 export TF_FORCE_GPU_ALLOW_GROWTH=true
+export NN=1
 
-srun -N$SLURM_JOB_NUM_NODES -n$((SLURM_JOB_NUM_NODES*8)) -c7 --gpu-bind=closest python basic_usage.py \
---run_name $run_name --config $config --yaml_config $yaml_config --use_ddp >> log_pm25_wonorm_R2loss_B 2>&1
+export run_name="demo_vit_wonorm_R2loss_expoemb"
+export yaml_config=./config/Demo_graph_vit_pm2.5_B.yaml
+
+srun -N$NN -n$((NN*8)) -c7 --gpu-bind=closest python basic_usage.py \
+--run_name $run_name --config $config --yaml_config $yaml_config --use_ddp >> log_pm25_wonorm_R2loss_B_expoemb 2>&1 &
+
+export run_name="demo_vit_wonorm_MSEloss_expoemb"
+export yaml_config=./config/Demo_graph_vit_pm2.5_B.yaml
+
+srun -N$NN -n$((NN*8)) -c7 --gpu-bind=closest python basic_usage.py \
+--run_name $run_name --config $config --yaml_config $yaml_config --use_ddp >> log_pm25_wonorm_MSEloss_B_expoemb 2>&1 &
+
+wait

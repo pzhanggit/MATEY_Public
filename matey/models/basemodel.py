@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from einops import rearrange, repeat
-from .spatial_modules import hMLP_stem, hMLP_output, SubsampledLinear, GraphhMLP_stem, GraphhMLP_output, UpsampleinSpace, UpsampleConv3d 
-from .time_modules import leadtimeMLP
+from .spatial_modules import hMLP_stem, hMLP_output, SubsampledLinear, GraphhMLP_stem, GraphhMLP_output, UpsampleinSpace, UpsampleConv3d, exposome_spatial_encoding 
+from .time_modules import leadtimeMLP, SineActivation, CosineActivation
 from .input_modules import input_control_MLP
 from .positionbias_modules import positionbias_mod
 import sys
@@ -29,7 +29,7 @@ class BaseModel(nn.Module):
         n_states (int): Number of input state variables.
     """
     def __init__(self, tokenizer_heads, n_states=6, n_states_out=None, n_states_cond=None, embed_dim=768, leadtime=False, cond_input=False, n_steps=1, bias_type="none", SR_ratio=[1,1,1], model_SR=False, 
-    hierarchical=None, notransposed=False, nlevels=1, smooth=False, use_linear=False, ghost_sync=False):
+    hierarchical=None, notransposed=False, nlevels=1, smooth=False, use_linear=False, ghost_sync=False, exposome_flag=False):
         super().__init__()
         self.space_bag = nn.ModuleList([SubsampledLinear(n_states, embed_dim//4) for _ in range(nlevels)])
         self.conditioning = (n_states_cond is not None and n_states_cond > 0)
@@ -91,7 +91,15 @@ class BaseModel(nn.Module):
             if self.cond_input:
                 self.inconMLP.append(input_control_MLP(hidden_dim=embed_dim,n_steps=n_steps))
             self.posbias.append(positionbias_mod(bias_type, embed_dim))
-        self.embed_dim=embed_dim 
+        self.embed_dim=embed_dim
+        self.exposome_flag=exposome_flag
+        self.exposome_proj=nn.ModuleDict({})
+        if self.exposome_flag:
+            #from Fox et al., PM2.5 work
+            self.exposome_proj["time_enc_sin"] = SineActivation(1, 12)
+            self.exposome_proj["time_enc_cos"] = CosineActivation(1, 12)
+            self.exposome_proj["land_enc"] = nn.Embedding(17, 12)
+            self.exposome_proj["mlp"] = nn.Linear(228, embed_dim) #=32*2*3 (for position)+12*2+12=228
         
     def expand_conv_projections(self, refine_resol):
         """ Appends addition conv heads"""

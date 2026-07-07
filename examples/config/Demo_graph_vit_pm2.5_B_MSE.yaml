@@ -57,7 +57,7 @@ basic_config: &basic_config
   extended_names: !!bool False # Whether to use extended names - not currently implemented
   embedding_offset: 0  # Use when adding extra finetuning fields
   exposome_flag: !!bool True # Whether to use exposome embedding features
-  loss_type: 'R2loss' # Loss function to use - NMSE, MSEloss, R2loss
+  loss_type: 'MSEloss' # Loss function to use - NMSE, MSEloss, R2loss
   train_data_paths: [
               #['/home/6pz/data/PDEBench_Data/2D/shallow-water', 'swe', ''],
               #['/home/6pz/data/PDEBench_Data/2D/NS_incom', 'incompNS', ''],

@@ -95,7 +95,11 @@ class H3AirQualityGraphDataset(Dataset):
         for graph in self.graphs:
             # Patch isolated nodes without changing the original graph builder.
             self._connect_zero_degree_nodes_to_nearest_(graph)
-            graph.x = torch.cat([graph.x, graph.pos], dim=1)
+            #we do not use pos as node features for now, as we have separate embedding for pos
+            ##graph.x = torch.cat([graph.x, graph.pos], dim=1)
+            #remove land_cover from node features
+            graph.land_cover = graph.x[:, -1].float()
+            graph.x = graph.x[:, :-1] 
         self.get_minmax()
         self.get_node_type()
 
@@ -130,7 +134,8 @@ class H3AirQualityGraphDataset(Dataset):
     def _specifics():
         type = "h3airqualitygraph"
         nlags=15
-        ##131 node features + 3 pos
+        ##131 node features - 1 for land_cover, which is handled separately in the model, 
+        #and 3 for pos (lat, lon, elevation), which is also handled separately in the model
         feature_names = (
             ["conc", "min_air_temperature"]
             + [f"lags_min_air_temperature_{it}" for it in range(1, 1 + nlags)]
@@ -147,14 +152,14 @@ class H3AirQualityGraphDataset(Dataset):
             + ["wind_direction"]
             + [f"lags_wind_direction_{it}" for it in range(1, 1 + nlags)]
             + [f"lags_pm_prior_{it}" for it in range(1, 1 + nlags)]
-            + ["day_population", "night_population", "land_cover"]
-            + ["lat", "lon", "elevation"]
+            + ["day_population", "night_population"] #, "land_cover"]
+            #+ ["lat", "lon", "elevation"]
         )
         query_features = (
             ["min_air_temperature", "max_air_temperature", "min_relative_humidity", "max_relative_humidity"]
             + ["wind_speed", "precipitation_amount", "wind_direction"]
-            + ["day_population", "night_population", "land_cover"]
-            + ["lat", "lon", "elevation"]
+            + ["day_population", "night_population"] #, "land_cover"]
+            #+ ["lat", "lon", "elevation"]
         )
         field_names_out = ["conc"]
         time_steps=601
@@ -169,21 +174,32 @@ class H3AirQualityGraphDataset(Dataset):
         # Calculate min/max of each feature in graph.x across all graphs and all nodes.
         feat_min = None
         feat_max = None
+        pos_min = None
+        pos_max = None
 
         for g in self.graphs:
             x = g.x.float()  # shape: [num_nodes, num_features]
+            pos = g.pos.float()  # shape: [num_nodes, 3] (lat, lon, elevation)
 
             cur_min = x.amin(dim=0)
             cur_max = x.amax(dim=0)
+            cur_pos_min = pos.amin(dim=0)
+            cur_pos_max = pos.amax(dim=0)
 
             feat_min = cur_min if feat_min is None else torch.minimum(feat_min, cur_min)
             feat_max = cur_max if feat_max is None else torch.maximum(feat_max, cur_max)
+            pos_min = cur_pos_min if pos_min is None else torch.minimum(pos_min, cur_pos_min)
+            pos_max = cur_pos_max if pos_max is None else torch.maximum(pos_max, cur_pos_max)
 
         self.feat_min = feat_min
         self.feat_max = feat_max
+        self.pos_min = pos_min
+        self.pos_max = pos_max
 
         print("Feature min:", self.feat_min, flush=True)
         print("Feature max:", self.feat_max, flush=True)
+        print("Position min:", self.pos_min, flush=True)
+        print("Position max:", self.pos_max, flush=True)
 
         print(self.path, flush=True)
         for ifeat, feature in enumerate(self.feature_names):
@@ -389,11 +405,11 @@ class H3AirQualityGraphDataset(Dataset):
         raw.query_mask = query_mask
         raw.loss_mask = query_mask
         raw.target_idx = torch.tensor(target_idx, dtype=torch.long)
-        raw.t0 = self._time_value(raw, fallback=index)
+        raw.t0 = self._time_value(raw)
         raw.target_t = raw.t0
         raw.dt = int(self.dt)
 
-        for name, value in {"x_in": x_in, "y": y, "edge_attr": raw.edge_attr, "pos": raw.pos}.items():
+        for name, value in {"x_in": x_in, "y": y, "edge_attr": raw.edge_attr, "pos": raw.pos, "t0": raw.t0, "land_cover": raw.land_cover}.items():
             if torch.is_tensor(value) and not torch.isfinite(value).all():
                 raise RuntimeError(f"Non-finite {name} in sample index={index}")
         if query_mask.sum().item() == 0:
@@ -436,8 +452,8 @@ class H3AirQualityGraphDataset(Dataset):
         data.y = self._node_features(target_graph)[:, target_idx : target_idx + 1].clone()
         data.query_mask = self._query_mask(target_graph)
         data.loss_mask = data.query_mask
-        data.t0 = self._time_value(input_graphs[0], fallback=index)
-        data.target_t = self._time_value(target_graph, fallback=target_index)
+        data.t0 = self._time_value(input_graphs[0])
+        data.target_t = self._time_value(target_graph)
         data.dt = int(self.dt)
         return data
 
@@ -473,16 +489,13 @@ class H3AirQualityGraphDataset(Dataset):
             return torch.ones(graph.num_nodes, dtype=torch.bool)
         return graph.node_type.view(-1).long() >= self.query_node_min_type
 
-    def _time_value(self, graph, fallback):
+    def _time_value(self, graph):
         if hasattr(graph, "time"):
             t = graph.time
-            if isinstance(t, Tensor):
-                return int(t.reshape(-1)[0].item())
-            try:
-                return int(t)
-            except Exception:
-                pass
-        return int(fallback)
+            assert (t == t[0]).all().item(), f"Expected all time values in graph to be the same, got {t}"
+            return t
+        else:
+            raise AttributeError("H3 graph is missing required time attribute `time`.")
 
     def _assert_same_nodes(self, g0, g1):
         if g0.num_nodes != g1.num_nodes:

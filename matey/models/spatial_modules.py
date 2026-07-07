@@ -468,3 +468,21 @@ class GraphhMLP_output(nn.Module):
             x_list.append(h)
         x_out = torch.stack(x_list, dim=1) #[N_local, T, out_chans]
         return (x_out, batch, edge_index, ghost_info, comm)
+
+#from Fox et al., PM2.5 work
+def get_fourier(x, P, N):
+    x = x.unsqueeze(1)
+    ns = torch.arange(1,N+1).unsqueeze(0).repeat_interleave(x.shape[0], dim=0).to(x.device)
+    sin_emb = torch.sin(2*np.pi* (ns/P)*x)
+    cos_emb = torch.cos(2*np.pi* (ns/P)*x)
+    return torch.hstack((sin_emb,cos_emb))
+    
+def exposome_spatial_encoding(positions, num_frequency_bands, period=1):
+    '''
+    input:  [B, N] 
+    output: [B, 2*N*num_frequency_bands]
+    '''
+    fpos = torch.Tensor([]).to(positions.device)
+    for i in range(positions.shape[1]):
+        fpos = torch.cat([fpos,get_fourier(positions[:,i], period, num_frequency_bands)], dim=-1)
+    return fpos
