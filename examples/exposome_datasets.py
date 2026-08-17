@@ -60,39 +60,46 @@ class ExposomeDataset(Dataset):
     return subgraph
 
 # main function:
+def main():
 
-# open the pt file
-graph_file = '/lustre/orion/med117/proj-shared/exposomedata/test_static/static/static_normalized_k1_h3_08.pt'
+  # open the pt file
+  graph_file = '/lustre/orion/med117/proj-shared/exposomedata/test_static/static/static_normalized_k1_h3_08.pt'
 
-start = time.perf_counter()
+  start = time.perf_counter()
 
-# load the global graph
-graphs = torch.load( graph_file, weights_only=False, map_location="cpu" )
+  # load the global graph
+  graphs = torch.load( graph_file, weights_only=False, map_location="cpu" )
 
-elapsed= time.perf_counter() - start
+  elapsed= time.perf_counter() - start
 
-print( f'Done loading the graph: {elapsed} seconds' )
+  print( f'Done loading the graph: {elapsed} seconds' )
 
-# show dimensionality of the global graph
-print( graphs )
+  # show dimensionality of the global graph
+  print( graphs )
 
-# number of hops to extract around the node at index in the global_graph
-# this should be equal to the number of layers in the GNN
-k = 1
+  # number of hops to extract around the node at index in the global_graph
+  # this should be equal to the number of layers in the GNN
+  k = 10
 
-# create the dataset
-dataset = ExposomeDataset( graphs, k )
+  # create the dataset
+  dataset = ExposomeDataset( graphs, k )
 
-# arbitrarily pick a node somewhere in the middle of the global list
-index = 5332500
+  # arbitrarily pick a node somewhere in the middle of the global list
+  index = 5332500
 
-start = time.perf_counter()
-# extract the subgraph and print it
-print(dataset.__getitem__( index ))
+  start = time.perf_counter()
 
-elapsed= time.perf_counter() - start
+  # extract the subgraph and print it
+  print(dataset.__getitem__( index ))
 
-print( f'Done extracting the subgraph: {elapsed} seconds' )
+  elapsed= time.perf_counter() - start
+
+  print( f'Done extracting the subgraph: {elapsed} seconds' )
+
+if __name__ == "__main__":
+
+  main()
+
 
 
 
